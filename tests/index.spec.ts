@@ -1,35 +1,111 @@
 import { readFileSync } from 'node:fs'
-import { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it } from 'vitest'
 import * as plugin from '../src/index.ts'
+import {
+  DEFAULT_GREETING,
+  PLUGIN_NAME,
+  loadPatch,
+  observeMount,
+  patchRows,
+  registersSelf,
+} from './plugin-contract.ts'
 
-describe('plugin-template', () => {
-  it('mounts into a cordis context with the default config', async () => {
-    const ctx = new Context()
-    const fiber = await ctx.plugin(plugin)
-    await fiber.dispose()
+const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
+  name: string
+}
+
+function row(name = `'${pkg.name}'`, extra = ''): string {
+  return `- insert:\n    - id: ${plugin.name}\n      name: ${name}${extra}\n`
+}
+
+describe('plugin-template exports', () => {
+  it('exports the plugin name', () => {
+    expect(plugin.name).toBe(PLUGIN_NAME)
   })
 
-  it('accepts an explicit config', async () => {
-    const ctx = new Context()
-    const fiber = await ctx.plugin(plugin, { greeting: 'custom greeting' })
-    await fiber.dispose()
-  })
-
-  it('exposes a plugin name and config schema', () => {
-    expect(plugin.name).toBe('plugin-template')
+  it('exports the config schema', () => {
     expect(plugin.Config).toBeDefined()
   })
 })
 
-describe('cordis.patch.yml', () => {
-  it('registers this plugin under the npm package name', () => {
-    const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
-    const pkg = JSON.parse(read('../package.json')) as { name: string }
-    const entries = [...read('../cordis.patch.yml').matchAll(/- id:\s*(\S+)[\s\S]*?name:\s*'([^']+)'/g)]
-    const entry = entries.find(([, id]) => id === plugin.name)
-    expect(entry, `no cordis.patch.yml entry with id "${plugin.name}"`).toBeDefined()
-    expect(entry?.[2]).toBe(pkg.name)
+describe('plugin-template mount', () => {
+  it('logs the default greeting when config is omitted', async () => {
+    const observed = await observeMount(plugin)
+    expect(observed.error).toBeUndefined()
+    expect(observed.logs).toEqual([{ type: 'info', args: ['%s', DEFAULT_GREETING] }])
+  })
+
+  it('logs an explicit greeting', async () => {
+    const observed = await observeMount(plugin, { greeting: 'custom greeting' })
+    expect(observed.error).toBeUndefined()
+    expect(observed.logs).toEqual([{ type: 'info', args: ['%s', 'custom greeting'] }])
+  })
+
+  it('logs a space greeting', async () => {
+    const observed = await observeMount(plugin, { greeting: ' ' })
+    expect(observed.error).toBeUndefined()
+    expect(observed.logs).toEqual([{ type: 'info', args: ['%s', ' '] }])
+  })
+
+  it('uses the default greeting when greeting is null', async () => {
+    const observed = await observeMount(plugin, { greeting: null })
+    expect(observed.error).toBeUndefined()
+    expect(observed.logs).toEqual([{ type: 'info', args: ['%s', DEFAULT_GREETING] }])
+  })
+
+  it('rejects an empty greeting', async () => {
+    const observed = await observeMount(plugin, { greeting: '' })
+    expect(observed.error).toBeInstanceOf(Error)
+    expect(observed.error?.name).toBe('ValidationError')
   })
 })
 
+describe('host patch registration', () => {
+  it('accepts a single-quoted package name', () => {
+    const parsed = loadPatch(row())
+    expect(registersSelf(parsed, plugin.name, pkg.name)).toBe(true)
+  })
+
+  it('accepts a double-quoted package name', () => {
+    const parsed = loadPatch(row(`"${pkg.name}"`))
+    expect(registersSelf(parsed, plugin.name, pkg.name)).toBe(true)
+  })
+
+  it('accepts an unquoted package name', () => {
+    const parsed = loadPatch(row(pkg.name))
+    expect(registersSelf(parsed, plugin.name, pkg.name)).toBe(true)
+  })
+
+  it('accepts a folded package name', () => {
+    const parsed = loadPatch(`- insert:\n    - id: ${plugin.name}\n      name: >-\n        ${pkg.name}\n`)
+    expect(registersSelf(parsed, plugin.name, pkg.name)).toBe(true)
+  })
+
+  it('accepts a host !!js config on the registered row', () => {
+    const parsed = loadPatch(row(pkg.name, '\n      config:\n        greeting: !!js hello'))
+    expect(patchRows(parsed)[0]?.config?.greeting).toEqual({ __jsExpr: 'hello' })
+    expect(registersSelf(parsed, plugin.name, pkg.name)).toBe(true)
+  })
+
+  it('accepts an extra insert beside this plugin', () => {
+    const parsed = loadPatch(`${row().trimEnd()}\n    - id: tool-extra\n      name: other-pkg\n`)
+    expect(patchRows(parsed)).toHaveLength(2)
+    expect(registersSelf(parsed, plugin.name, pkg.name)).toBe(true)
+  })
+
+  it('parses an empty list without registering this plugin', () => {
+    const parsed = loadPatch('[]\n')
+    expect(parsed).toEqual([])
+    expect(registersSelf(parsed, plugin.name, pkg.name)).toBe(false)
+  })
+
+  it('does not treat another package insert as this plugin', () => {
+    const parsed = loadPatch(`- insert:\n    - id: tool-extra\n      name: '${pkg.name}'\n`)
+    expect(parsed).toHaveLength(1)
+    expect(registersSelf(parsed, plugin.name, pkg.name)).toBe(false)
+  })
+
+  it('surfaces a patch that is not a list', () => {
+    expect(() => loadPatch('')).toThrow(/array/)
+  })
+})

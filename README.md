@@ -7,11 +7,12 @@ Development template for [DeepSeek Harness](https://github.com/deepseek-ai/deeps
 | Path | Purpose |
 |---|---|
 | `src/index.ts` | Plugin skeleton: `name`, typed `Config` (schemastery), `apply` |
-| `tests/index.spec.ts` | Mounts the plugin into a real cordis `Context` |
+| `tests/index.spec.ts` | Source mount, export names, and host patch registration |
 | `cordis.patch.yml` | Profile bundle patch that registers the plugin in a dsh profile |
 | `tsdown.config.ts` / `tsconfig.json` | ESM build with declarations; strict typecheck |
 | `.oxlintrc.json` | Lint baseline (tests get `no-non-null-assertion` / `require-yield` relaxed) |
-| `.github/workflows/pr-checks.yml` | install → build → lint → typecheck → test on `main` pushes and PRs |
+| `scripts/check-package.mjs` | Builds, packs, and loads the tarball through its public export |
+| `.github/workflows/pr-checks.yml` | install → build → lint → typecheck → test → package check on `main` pushes and PRs |
 | `.github/workflows/release.yml` | On `vX.Y.Z` tag: dsh-plugin-checker → same chain → tag/version match → `npm publish` (OIDC) |
 
 ## Start a plugin from this template
@@ -21,16 +22,17 @@ Development template for [DeepSeek Harness](https://github.com/deepseek-ai/deeps
    - `src/index.ts`: `export const name`, the `Config` shape, the `apply` body, and the `@module` tag / default `greeting`
    - `cordis.patch.yml`: the `id` (match `export const name`) and `name` (npm package name); add config keys as needed
    - `tests/index.spec.ts`: the `describe` label and the name assertion
+   - `tests/plugin-contract.ts`: `PLUGIN_NAME` and `DEFAULT_GREETING`
    - `README.md` and `LICENSE`: rewrite for your plugin; copyright holder, if not you
 2. Add the dsh services your plugin needs: list service names in `export const inject` (for example `['subagents']` or `['forge']`), add the corresponding `@deepseek-ai/dsh-*` packages to `peerDependencies` (and `devDependencies`, registry versions — `link:` paths break CI), and extend `tests/` to cover your behavior.
 3. Develop:
 
 ```sh
 pnpm install
-pnpm run lint && pnpm run typecheck && pnpm test && pnpm run build
+pnpm run lint && pnpm run typecheck && pnpm test && pnpm run test:package
 ```
 
-CI runs the same chain on pushes to `main` and on pull requests.
+Pull requests run lint, typecheck, the source tests, and `pnpm run test:package`.
 
 ## Releasing
 
