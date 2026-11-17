@@ -37,16 +37,6 @@ function assert(condition, message) {
   if (!condition) throw new Error(message)
 }
 
-function parsePackOutput(stdout) {
-  const lines = stdout.split('\n')
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    if (lines[index].trimStart().startsWith('[')) {
-      return JSON.parse(lines.slice(index).join('\n'))
-    }
-  }
-  throw new Error('npm pack did not return a JSON file list')
-}
-
 const build = spawnSync('pnpm', ['run', 'build'], { cwd: root, stdio: 'inherit' })
 if (build.status !== 0) {
   process.stderr.write('package check: build failed\n')
@@ -64,7 +54,7 @@ try {
     process.stderr.write('package check: npm pack failed\n')
     process.exit(pack.status ?? 1)
   }
-  const packed = parsePackOutput(pack.stdout)
+  const packed = JSON.parse(pack.stdout)
   const tarball = join(scratch, packed[0].filename)
   const memberPaths = packed[0].files.map((file) => file.path)
   const consumer = join(scratch, 'consumer')
